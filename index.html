@@ -13,7 +13,10 @@
    PICTURE: 横いっぱいに流れる波形記録。トリガー区間は橙で塗る。
    COLOUR/TYPE: アルミ #e9eaec / 黒 / 橙 #ff4f00、夜 #141517。Geist。
    LAYOUT: 読み取り（推定震度・gal）→ 波形 → 操作 → 記録表。 */
-:root{color-scheme:light dark;--bg:light-dark(#e9eaec,#141517);--panel:light-dark(#f6f6f7,#1d1e21);--ink:light-dark(#111,#ececee);--mute:light-dark(#5d6066,#9a9ca3);--line:light-dark(#c9cbcf,#33353a);--acc:#ff4f00;--ok:light-dark(#1d6b3a,#5fd08a)}
+/* 古いSafari（iOS 17.4以前）は light-dark() 非対応のため、明るい配色を先に定義 */
+:root{--bg:#e9eaec;--panel:#f6f6f7;--ink:#111;--mute:#5d6066;--line:#c9cbcf;--acc:#ff4f00;--ok:#1d6b3a}
+@supports (color:light-dark(#000,#fff)){
+:root{color-scheme:light dark;--bg:light-dark(#e9eaec,#141517);--panel:light-dark(#f6f6f7,#1d1e21);--ink:light-dark(#111,#ececee);--mute:light-dark(#5d6066,#9a9ca3);--line:light-dark(#c9cbcf,#33353a);--ok:light-dark(#1d6b3a,#5fd08a)}}
 :root[data-theme=light]{color-scheme:light}:root[data-theme=dark]{color-scheme:dark}
 *{box-sizing:border-box;min-width:0}
 body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 Geist,system-ui,"Hiragino Sans","Noto Sans JP",sans-serif;overflow-x:clip}
@@ -53,6 +56,18 @@ th{font-size:13px;color:var(--mute);font-weight:500}
 .note li{margin:4px 0}
 .msg{margin-top:10px;font-size:14px;color:var(--acc);min-height:1em}
 .scroll{overflow-x:auto}
+button.del{min-height:36px;padding:0 12px;font-size:14px;font-weight:400}
+button.del[data-sure]{background:var(--acc);color:#fff;border-color:var(--acc)}
+select{font:inherit;font-size:16px;min-height:44px;padding:0 12px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink)}
+.judge{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px 20px;margin-top:12px}
+.judge .lv{font-size:clamp(22px,4vw,30px);font-weight:700;line-height:1.2;margin:2px 0 6px}
+.judge .lv.w{color:var(--acc)}
+.judge .facts{display:flex;flex-wrap:wrap;gap:4px 20px;color:var(--mute);font-size:14px;margin:8px 0 12px}
+.judge .facts b{color:var(--ink);white-space:nowrap}
+.judge h3{font-size:16px;margin:14px 0 4px}
+.judge ul{margin:0;padding-left:1.2em}.judge li{margin:5px 0;max-width:70ch}
+.judge .warn{border-left:4px solid var(--acc);padding:8px 12px;margin:12px 0 0;background:rgba(255,79,0,.08)}
+.judge .fine{font-size:13px;color:var(--mute);margin-top:14px}
 @media(max-width:600px){.read{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.read>div:first-child{grid-column:1/-1}table{font-size:13px}}
 @media(prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
@@ -74,13 +89,15 @@ th{font-size:13px;color:var(--mute);font-weight:500}
     <span>サンプリング <b id="sHz">–</b> Hz</span>
     <span>平常ノイズ <b id="sNoise">–</b> gal</span>
     <span>STA/LTA <b id="sRatio">–</b></span>
+    <b id="sHold" style="color:var(--acc)"></b>
   </div>
 
   <div class="ctrl">
     <button class="pri" id="bStart">開始</button>
     <button id="bDemo">デモ揺れを発生</button>
     <button id="bCsv">記録をCSV保存</button>
-    <button id="bClear">記録を消去</button>
+    <button id="bClearDemo">デモの記録だけ消去</button>
+    <button id="bClear">すべての記録を消去</button>
   </div>
   <div class="msg" id="msg"></div>
 
@@ -97,7 +114,18 @@ th{font-size:13px;color:var(--mute);font-weight:500}
   <div class="fig" style="height:240px"><canvas id="cv2"></canvas></div>
   <h2 style="margin-top:22px">時間ごとのまとめ</h2>
   <div id="hours"></div>
-  <div class="ctrl"><button id="bMin">1分ごとの記録をCSV保存</button></div>
+  <div class="ctrl">
+    <button id="bMin">1分ごとの記録をCSV保存</button>
+    <button id="bImp">CSVを読み込む（PCで見る用）</button>
+    <input type="file" id="iImp" accept=".csv,text/csv" hidden>
+  </div>
+  <div class="msg" id="impMsg"></div>
+</section>
+
+<section class="band">
+  <h2>判定とコメント</h2>
+  <div class="ctrl" style="margin-top:0"><label for="iDay" class="lab">対象の日</label><select id="iDay"></select></div>
+  <div id="judge" class="judge"></div>
 </section>
 
 <section class="band">
@@ -111,7 +139,7 @@ th{font-size:13px;color:var(--mute);font-weight:500}
     <li>センサーは HTTPS で配信したページでしか動きません（GitHub Pages・Netlify など）。iPhone は「開始」を押すと許可ダイアログが出ます。</li>
     <li>手に持つと揺れと区別できません。机・床に置き、画面は点けたままにしてください（対応ブラウザでは自動でスリープを防ぎます）。</li>
     <li>振動レベルは、上下方向の揺れの実効値から計算した目安です（20·log₁₀(実効値 ÷ 10⁻⁵ m/s²)）。正式な振動レベル計（JIS C 1510）の周波数補正はしていません。スマホのセンサーには雑音があるため、おおむね 55〜60 dB 以下は正しく測れません。</li>
-    <li>工事の振動を記録するときは、1階の床（できれば工事側の部屋）に置き、充電しながら工事中ずっと動かしてください。1分ごとの記録は端末内に7日分残ります。</li>
+    <li>工事の振動を記録するときは、1階の床（できれば工事側の部屋）に置き、充電しながら工事中ずっと動かしてください。1分ごとの記録は端末内に14日分残ります。</li>
     <li>震度は加速度だけから計算した目安です（I ≒ 2·log₁₀(gal) + 0.94）。気象庁の計測震度とは一致しません。</li>
     <li>ブラウザが背景に回るとセンサーは止まります。緊急地震速報の代わりにはなりません。</li>
   </ul>
@@ -131,12 +159,15 @@ let ratioTh = 3, minGal = 2;
 let log = [];
 try { log = JSON.parse(localStorage.getItem('shakeLog') || '[]'); } catch (e) { log = []; }
 
-let ms = 0, db = 0, acc = null, mins = [];
+let ms = 0, db = 0, acc = null, mins = [], holdUntil = 0;
+const hold = t => { holdUntil = Math.max(holdUntil, performance.now() + t); };
+// 画面に触れたら3秒間は記録しない（タップの振動を拾わないため）
+['touchstart', 'pointerdown'].forEach(n => document.addEventListener(n, () => hold(3000), {passive: true}));
 try { mins = JSON.parse(localStorage.getItem('shakeMin') || '[]'); } catch (e) { mins = []; }
 function pushMinute(a) {
-  if (a.k * 60000 < Date.now() - 7 * 864e5) return;
+  if (a.k * 60000 < Date.now() - 14 * 864e5) return;
   mins.push({k: a.k, db: +a.db.toFixed(1), gal: +a.gal.toFixed(1), demo: demo || undefined});
-  const cut = Math.floor(Date.now() / 60000) - 7 * 1440;
+  const cut = Math.floor(Date.now() / 60000) - 14 * 1440;
   while (mins.length && mins[0].k < cut) mins.shift();
   try { localStorage.setItem('shakeMin', JSON.stringify(mins)); } catch (e) {}
   renderHours();
@@ -144,6 +175,7 @@ function pushMinute(a) {
 const pad = n => String(n).padStart(2, '0');
 const ymdh = d => `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}時台`;
 function renderHours() {
+  renderJudge();
   if (!mins.length) { $('hours').innerHTML = '<div class="empty">計測を始めると、1分ごとに最大値を記録し、ここに1時間ずつまとめます。</div>'; return; }
   const g = new Map();
   for (const m of mins) {
@@ -156,12 +188,70 @@ function renderHours() {
   $('hours').innerHTML = '<div class="scroll"><table><thead><tr><th>時間帯</th><th>計測分数</th><th>最大</th><th>最大gal</th><th>65dB以上</th><th>75dB以上</th></tr></thead><tbody>' +
     rows.map(([k, h]) => `<tr><td>${ymdh(new Date(k))}</td><td>${h.n} 分</td><td>${h.db.toFixed(1)} dB</td><td>${h.gal.toFixed(1)}</td><td>${h.o65} 分</td><td${h.o75 ? ' style="color:var(--acc);font-weight:700"' : ''}>${h.o75} 分</td></tr>`).join('') + '</tbody></table></div>';
 }
+// ---- 判定とコメント ----
+const dayKey = k => { const d = new Date(k * 60000); return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`; };
+const LV = [
+  [55, '震度0相当（無感）', '人はほとんど揺れを感じない大きさです。'],
+  [65, '震度1相当（微震）', '静かにしている人だけが、わずかに揺れを感じる程度です。'],
+  [75, '震度2相当（軽震）', '家の中の多くの人が揺れを感じ、戸や障子がわずかに動く程度です。'],
+  [85, '震度3相当（弱震）', '家が揺れ、戸がガタガタ鳴り、棚の食器が音を立てることがある程度です。'],
+  [Infinity, '震度4相当以上（中震）', '吊り下げ物が大きく揺れ、座りの悪い置物が倒れることがある強い揺れです。']
+];
+const ADV = [
+  ['この大きさなら、生活への影響は小さいと考えられます。', '体感と合わない場合は、1階の工事側の部屋の床に置いて測り直してください。スマホのセンサーでは 55〜60 dB より小さい揺れは正確に測れません。'],
+  ['工事の間は記録を続け、揺れを感じた時刻と作業内容（重機、くい打ち、解体など）をメモしておきましょう。', '気になる場合は、施工業者（現場の看板に連絡先があります）に、工事の期間と揺れの大きい作業の予定を聞いておくと安心です。'],
+  ['施工業者に「揺れが気になっている」ことを伝え、作業の時間帯や振動を抑える方法（低振動型の機械など）を相談しましょう。', 'この記録（時間ごとのまとめやCSV）を見せると、話が具体的になります。', '壁・基礎・外構のひびなど、家の状態を今のうちに日付入りの写真で残しておくと、後で比べられます。'],
+  ['施工業者に申し入れるとともに、市区町村の環境（公害）担当の窓口に相談しましょう。自治体が現地確認や測定、業者への指導をしてくれる場合があります。', '壁・天井・基礎・外構のひびや、建具の開け閉めの変化を日付入りの写真で記録してください。', '揺れが大きかった時刻と作業内容を、記録と一緒にまとめておきましょう。'],
+  ['強い揺れです。すぐに施工業者へ連絡し、作業の一時中断や方法の見直しを求めてください。', '市区町村の環境（公害）担当にも、速やかに相談してください。', '家の被害（ひび、建具のゆがみ、物の落下）を確認し、写真で記録してください。危ないと感じたら工事側の部屋から離れてください。']
+];
+function renderJudge() {
+  const real = mins.filter(m => !m.demo);
+  const days = [...new Set(real.map(m => dayKey(m.k)))];
+  const sel = $('iDay'), cur = sel.value;
+  sel.innerHTML = days.length ? days.slice().reverse().map(d => `<option>${d}</option>`).join('') + '<option value="all">すべての期間</option>' : '<option value="">記録なし</option>';
+  if ([...sel.options].some(o => o.value === cur)) sel.value = cur;
+  const list = sel.value === 'all' ? real : real.filter(m => dayKey(m.k) === sel.value);
+  if (!list.length) { $('judge').innerHTML = '<p class="sub">計測すると、1分ごとの記録をもとに、揺れの程度と対応の目安をここに表示します（デモの記録は含めません）。</p>'; return; }
+  const top = list.reduce((a, b) => b.db > a.db ? b : a);
+  const i = LV.findIndex(l => top.db < l[0]);
+  const c65 = list.filter(m => m.db >= 65).length, c75 = list.filter(m => m.db >= 75).length;
+  const off = list.filter(m => { const d = new Date(m.k * 60000), h = d.getHours(); return m.db >= 65 && (h < 7 || h >= 19 || d.getDay() === 0); });
+  const t = new Date(top.k * 60000), at = `${t.getMonth() + 1}/${t.getDate()} ${pad(t.getHours())}:${pad(t.getMinutes())}`;
+  const extra = [];
+  if (c65 >= 30) extra.push(`65 dB 以上の揺れが合計 ${c65} 分ありました。一瞬ではなく長く続く揺れは、相談するときの大切な情報です。`);
+  if (off.length) extra.push(`工事が原則禁止されている時間帯（多くの住宅地では19時〜翌7時、日曜・休日）に、65 dB 以上の揺れが ${off.length} 分記録されています。車の通行など工事以外の原因でないか確かめたうえで、自治体に相談できます。`);
+  if (top.gal >= 50) extra.push('最大の揺れがとても大きい値です。そのときスマホに触れた、落ちた、物が当たったなどがないか、体感と照らし合わせて確認してください。');
+  $('judge').innerHTML =
+    `<div class="lab">最大 ${top.db.toFixed(1)} dB の揺れは</div><div class="lv${i >= 3 ? ' w' : ''}">${LV[i][1]}</div><p style="margin:0">${LV[i][2]}</p>` +
+    `<div class="facts"><span>計測 <b>${list.length} 分</b></span><span>最大の時刻 <b>${at}</b></span><span>65 dB以上 <b>${c65} 分</b></span><span>75 dB以上 <b>${c75} 分</b></span></div>` +
+    `<h3>おすすめの対応</h3><ul>${ADV[i].map(s => `<li>${s}</li>`).join('')}</ul>` +
+    extra.map(s => `<p class="warn">${s}</p>`).join('') +
+    '<p class="fine">スマホによる簡易計測の目安です。震度との対応は、自治体が示している振動レベルと震度階の換算値によります。規制基準 75 dB は工事現場の敷地境界での値なので、家の中の値とは直接比べられません。正式な評価には振動レベル計での測定が必要です。</p>';
+}
+// ---- CSV 読み込み（スマホで保存したCSVをPCで見る） ----
+function importCsv(text) {
+  const lines = text.replace(/^﻿/, '').split(/\r?\n/).filter(Boolean);
+  if (!lines.length || !lines[0].includes('最大振動レベルdB')) return '「1分ごとの記録をCSV保存」で作ったファイルを選んでください。';
+  const map = new Map(mins.map(m => [m.k, m])); let n = 0;
+  for (const ln of lines.slice(1)) {
+    const [dt, d, g, demoFlag] = ln.split(',');
+    const p = (dt || '').match(/(\d+)\/(\d+)\/(\d+) (\d+):(\d+)/); if (!p) continue;
+    const k = Math.floor(new Date(+p[1], p[2] - 1, +p[3], +p[4], +p[5]).getTime() / 60000);
+    map.set(k, {k, db: +d, gal: +g, demo: demoFlag === '1' || undefined}); n++;
+  }
+  mins = [...map.values()].sort((a, b) => a.k - b.k);
+  try { localStorage.setItem('shakeMin', JSON.stringify(mins)); } catch (e) {}
+  renderHours(); draw2();
+  return `${n} 分ぶんの記録を読み込みました。`;
+}
 function draw2() {
   const c = $('cv2'), x2 = c.getContext('2d'), dpr = devicePixelRatio || 1, W = c.clientWidth, H = c.clientHeight;
   if (c.width !== W * dpr || c.height !== H * dpr) { c.width = W * dpr; c.height = H * dpr; }
   x2.setTransform(dpr, 0, 0, dpr, 0, 0); x2.clearRect(0, 0, W, H);
   const ink = getComputedStyle(document.body).color, line = getComputedStyle(c.parentElement).borderTopColor, mute = getComputedStyle($('sHz').parentElement).color;
-  const now = Math.floor(Date.now() / 60000), N = 120, lo = 40, hi = 90, L = 44, B = 22;
+  // 計測中は「今」まで、それ以外は最後の記録までの2時間を表示（PCで読み込んだ記録も見られるように）
+  const now = (running || demo || !mins.length) ? Math.floor(Date.now() / 60000) : mins[mins.length - 1].k, N = 120, lo = 40, hi = 90, L = 44, B = 22;
+  const endD = new Date(now * 60000), endLab = (running || demo) ? '今' : `${pad(endD.getHours())}:${pad(endD.getMinutes())}`;
   const y = d => H - B - (Math.min(hi, Math.max(lo, d)) - lo) / (hi - lo) * (H - B - 10);
   x2.font = '12px Geist, sans-serif'; x2.lineWidth = 1;
   for (let d = 50; d <= 90; d += 10) { x2.strokeStyle = line; x2.beginPath(); x2.moveTo(L, y(d)); x2.lineTo(W, y(d)); x2.stroke(); x2.fillStyle = mute; x2.fillText(d + ' dB', 2, y(d) + 4); }
@@ -173,7 +263,7 @@ function draw2() {
   }
   x2.globalAlpha = 1; x2.setLineDash([5, 4]); x2.strokeStyle = '#ff4f00'; x2.beginPath(); x2.moveTo(L, y(75)); x2.lineTo(W, y(75)); x2.stroke(); x2.setLineDash([]);
   x2.fillStyle = mute;
-  for (let s = 0; s <= N; s += 30) { const xx = L + (N - s) * bw; x2.fillText(s ? `-${s}分` : '今', Math.min(W - 24, Math.max(L, xx - 14)), H - 5); }
+  for (let s = 0; s <= N; s += 30) { const xx = L + (N - s) * bw; x2.fillText(s ? `-${s}分` : endLab, Math.min(W - (s ? 24 : 36), Math.max(L, xx - 14)), H - 5); }
 }
 setInterval(draw2, 2000);
 const intensity = g => g < 0.1 ? null : 2 * Math.log10(g) + 0.94;
@@ -186,8 +276,18 @@ function sample(ax, ay, az, now) {
   if (dt > 0) hzEma += ((1 / dt) - hzEma) * 0.05;
   // 重力成分をローパスで推定し、差分を揺れとする（m/s² → gal）
   if (!grav) grav = [ax, ay, az];
-  const a = Math.min(1, dt / 0.8);
+  const a = Math.min(1, dt / (now < holdUntil ? 0.1 : 0.8));
   grav[0] += (ax - grav[0]) * a; grav[1] += (ay - grav[1]) * a; grav[2] += (az - grav[2]) * a;
+  // 傾きが15°以上変わったら「持ち上げ・置き直し」とみなして3秒休止
+  const rn = Math.hypot(ax, ay, az), gn0 = Math.hypot(grav[0], grav[1], grav[2]);
+  if (rn > 1 && gn0 > 1) { const c = (ax * grav[0] + ay * grav[1] + az * grav[2]) / (rn * gn0); if (c < Math.cos(15 * Math.PI / 180)) hold(3000); }
+  if (now < holdUntil) {
+    ms = 0; sta = 0; db = 0;
+    if (ev) { ev = null; quietSince = 0; document.body.classList.remove('alarm'); }
+    buf.push({t: now, v: 0, trig: false});
+    while (buf.length && now - buf[0].t > WIN * 1000) buf.shift();
+    return;
+  }
   const lx = ax - grav[0], ly = ay - grav[1], lz = az - grav[2];
   const v = Math.hypot(lx, ly, lz) * 100;
   // 振動レベル：上下（重力方向）成分の実効値、時定数 0.63 秒
@@ -256,8 +356,8 @@ async function start() {
     catch (e) { $('msg').textContent = '許可の確認に失敗しました：' + e.message; return; }
   }
   window.addEventListener('devicemotion', onMotion);
-  running = true; grav = null; lastT = 0;
-  try { if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen'); } catch (e) {}
+  running = true; grav = null; lastT = 0; hold(10000);
+  try { if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen'); else $('msg').textContent = 'この端末は画面のスリープを自動で止められません。設定で「自動ロック」を「なし」にしてください。'; } catch (e) {}
   setTimeout(() => { if (running && !demo && hzEma < 1) $('msg').textContent = 'センサーの値が届いていません。PCなどセンサーのない端末では「デモ揺れ」でお試しください。'; }, 3000);
   updState();
 }
@@ -325,6 +425,8 @@ function draw() {
   $('vNow').textContent = cur.toFixed(1);
   $('vMax').textContent = recentMax.toFixed(1);
   $('vInt').textContent = (running || demo) ? shindo(intensity(ev ? ev.max : cur)) : '–';
+  const left = Math.ceil((holdUntil - now) / 1000);
+  $('sHold').textContent = (running || demo) && left > 0 ? `操作中のため記録を休止（あと${left}秒）` : '';
   $('vDb').textContent = (running || demo) ? Math.max(0, db).toFixed(1) : '–';
   $('sHz').textContent = hzEma > 1 ? Math.round(hzEma) : '–';
   $('sNoise').textContent = (running || demo) ? lta.toFixed(2) : '–';
@@ -333,8 +435,8 @@ function draw() {
 
 function renderLog() {
   if (!log.length) { $('log').innerHTML = '<div class="empty">まだ記録はありません。揺れを検知すると、ここに時刻・最大加速度・推定震度が残ります。</div>'; return; }
-  $('log').innerHTML = '<div class="scroll"><table><thead><tr><th>検知時刻</th><th>継続</th><th>最大</th><th>推定震度</th></tr></thead><tbody>' +
-    log.map(r => `<tr><td>${fmtT(r.abs)}${r.demo ? '（デモ）' : ''}</td><td>${Math.max(0, r.dur).toFixed(1)} 秒</td><td>${r.max.toFixed(1)} gal</td><td>${r.shindo}</td></tr>`).join('') +
+  $('log').innerHTML = '<div class="scroll"><table><thead><tr><th>検知時刻</th><th>継続</th><th>最大</th><th>推定震度</th><th></th></tr></thead><tbody>' +
+    log.map((r, i) => `<tr><td>${fmtT(r.abs)}${r.demo ? '（デモ）' : ''}</td><td>${Math.max(0, r.dur).toFixed(1)} 秒</td><td>${r.max.toFixed(1)} gal</td><td>${r.shindo}</td><td><button class="del" data-i="${i}" aria-label="この記録を削除">削除</button></td></tr>`).join('') +
     '</tbody></table></div>';
 }
 
@@ -350,6 +452,26 @@ $('bCsv').addEventListener('click', csv);
 $('bMin').addEventListener('click', () => {
   const rows = [['日時', '最大振動レベルdB', '最大gal', 'デモ']].concat(mins.map(m => { const d = new Date(m.k * 60000); return [`${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`, m.db, m.gal, m.demo ? '1' : '']; }));
   const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['﻿' + rows.map(r => r.join(',')).join('\n')], {type: 'text/csv'})); a.download = 'vibration-minutes.csv'; a.click();
+});
+$('bImp').addEventListener('click', () => $('iImp').click());
+$('iImp').addEventListener('change', e => {
+  const f = e.target.files[0]; if (!f) return;
+  const r = new FileReader(); r.onload = () => { $('impMsg').textContent = importCsv(String(r.result)); }; r.readAsText(f);
+  e.target.value = '';
+});
+$('iDay').addEventListener('change', renderJudge);
+const saveAll = () => { try { localStorage.setItem('shakeLog', JSON.stringify(log)); localStorage.setItem('shakeMin', JSON.stringify(mins)); } catch (e) {} };
+$('bClearDemo').addEventListener('click', () => {
+  const n = log.filter(r => r.demo).length + mins.filter(m => m.demo).length;
+  log = log.filter(r => !r.demo); mins = mins.filter(m => !m.demo);
+  saveAll(); renderLog(); renderHours(); draw2();
+  $('msg').textContent = n ? 'デモの記録を消去しました。' : 'デモの記録はありません。';
+});
+// 検知記録の行ごとの削除（2回押しで確定）
+$('log').addEventListener('click', e => {
+  const b = e.target.closest('.del'); if (!b) return;
+  if (!b.dataset.sure) { b.dataset.sure = '1'; b.textContent = 'もう一度押すと削除'; setTimeout(() => { if (b.isConnected) { delete b.dataset.sure; b.textContent = '削除'; } }, 3000); return; }
+  log.splice(+b.dataset.i, 1); saveAll(); renderLog();
 });
 renderHours(); draw2();
 $('bClear').addEventListener('click', () => { log = []; mins = []; try { localStorage.removeItem('shakeLog'); localStorage.removeItem('shakeMin'); } catch (e) {} renderLog(); renderHours(); });
