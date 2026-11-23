@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#141517">
+<title>揺れ検知</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;700&family=Geist+Mono:wght@500&display=swap" rel="stylesheet">
+<style>
+/* VOICE: 精密計測器。静かで正確、警報時だけ強く。
+   IDEA: 卓上の地震計（ドラム記録計）＋デジタル読み取り窓。
+   PICTURE: 横いっぱいに流れる波形記録。トリガー区間は橙で塗る。
+   COLOUR/TYPE: アルミ #e9eaec / 黒 / 橙 #ff4f00、夜 #141517。Geist。
+   LAYOUT: 読み取り（推定震度・gal）→ 波形 → 操作 → 記録表。 */
+:root{color-scheme:light dark;--bg:light-dark(#e9eaec,#141517);--panel:light-dark(#f6f6f7,#1d1e21);--ink:light-dark(#111,#ececee);--mute:light-dark(#5d6066,#9a9ca3);--line:light-dark(#c9cbcf,#33353a);--acc:#ff4f00;--ok:light-dark(#1d6b3a,#5fd08a)}
+:root[data-theme=light]{color-scheme:light}:root[data-theme=dark]{color-scheme:dark}
+*{box-sizing:border-box;min-width:0}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 Geist,system-ui,"Hiragino Sans","Noto Sans JP",sans-serif;overflow-x:clip}
+.band{padding:clamp(18px,3vw,40px) max(4vw,14px);max-width:1240px;margin:0 auto}
+h1{font-size:clamp(28px,5vw,44px);line-height:1.05;margin:0 0 4px;font-weight:700}
+h2{font-size:20px;margin:0 0 10px}
+.sub{color:var(--mute);margin:0}
+.read{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr) minmax(0,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:10px;overflow:hidden;margin-top:18px}
+.read>div{background:var(--panel);padding:14px 16px}
+.lab{font-size:13px;color:var(--mute)}
+.big{font:500 clamp(44px,10vw,84px)/1 "Geist Mono",ui-monospace,monospace;white-space:nowrap}
+.mid{font:500 clamp(26px,5vw,40px)/1.1 "Geist Mono",ui-monospace,monospace;white-space:nowrap}
+.unit{font-size:15px;color:var(--mute);margin-left:4px}
+body.alarm .read>div:first-child{background:var(--acc);color:#fff}
+body.alarm .read>div:first-child .lab{color:#fff}
+.fig{position:relative;height:clamp(220px,38vh,360px);background:var(--panel);border:1px solid var(--line);border-radius:10px;margin-top:12px;overflow:hidden}
+.fig>canvas{position:absolute;inset:0;width:100%;height:100%}
+.status{display:flex;flex-wrap:wrap;gap:6px 18px;margin-top:10px;font-size:14px;color:var(--mute)}
+.dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--mute);margin-right:6px}
+.on .dot{background:var(--ok)}
+.ctrl{display:flex;flex-wrap:wrap;gap:10px;margin-top:16px;align-items:center}
+button{font:inherit;font-weight:500;min-height:44px;padding:0 18px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink);cursor:pointer}
+button.pri{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid var(--acc);outline-offset:2px}
+.set{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin-top:18px}
+.set label{display:block;font-size:14px;color:var(--mute)}
+.set output{font-family:"Geist Mono",monospace;color:var(--ink);float:right}
+input[type=range]{width:100%;accent-color:var(--acc);height:32px}
+.chk{display:flex;align-items:center;gap:8px;font-size:15px;min-height:44px}
+.chk input{width:20px;height:20px;accent-color:var(--acc)}
+table{width:100%;border-collapse:collapse;font-size:15px;background:var(--panel);border-radius:10px;overflow:hidden}
+th,td{padding:9px 12px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
+th:first-child,td:first-child{text-align:left}
+th{font-size:13px;color:var(--mute);font-weight:500}
+.empty{color:var(--mute);padding:14px;background:var(--panel);border-radius:10px}
+.note{font-size:14px;color:var(--mute);max-width:70ch}
+.note li{margin:4px 0}
+.msg{margin-top:10px;font-size:14px;color:var(--acc);min-height:1em}
+.scroll{overflow-x:auto}
+@media(max-width:600px){.read{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.read>div:first-child{grid-column:1/-1}table{font-size:13px}}
+@media(prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<section class="band">
+  <h1>揺れ検知</h1>
+  <p class="sub">スマホを机や床に平らに置いて「開始」。加速度センサーで地震や工事の揺れを記録します。</p>
+
+  <div class="read">
+    <div><div class="lab">振動レベル（目安）</div><div class="big"><span id="vDb">–</span><span class="unit">dB</span></div></div>
+    <div><div class="lab">現在の揺れ</div><div class="mid"><span id="vNow">0.0</span><span class="unit">gal</span></div><div class="lab">直近1分の最大 <b id="vMax">0.0</b> gal</div></div>
+    <div><div class="lab">推定震度（目安）</div><div class="mid" id="vInt">–</div></div>
+  </div>
+
+  <div class="fig"><canvas id="cv"></canvas></div>
+  <div class="status">
+    <span id="sState"><span class="dot"></span>停止中</span>
+    <span>サンプリング <b id="sHz">–</b> Hz</span>
+    <span>平常ノイズ <b id="sNoise">–</b> gal</span>
+    <span>STA/LTA <b id="sRatio">–</b></span>
+  </div>
+
+  <div class="ctrl">
+    <button class="pri" id="bStart">開始</button>
+    <button id="bDemo">デモ揺れを発生</button>
+    <button id="bCsv">記録をCSV保存</button>
+    <button id="bClear">記録を消去</button>
+  </div>
+  <div class="msg" id="msg"></div>
+
+  <div class="set">
+    <div><label>検知感度（STA/LTA比）<output id="oRatio">3.0</output></label><input type="range" id="iRatio" min="1.5" max="8" step="0.5" value="3"></div>
+    <div><label>最小加速度<output id="oMin">2.0 gal</output></label><input type="range" id="iMin" min="0.5" max="20" step="0.5" value="2"></div>
+    <div><label class="chk"><input type="checkbox" id="iSound" checked>警報音</label><label class="chk"><input type="checkbox" id="iVib" checked>バイブ（Android）</label></div>
+  </div>
+</section>
+
+<section class="band">
+  <h2>1分ごとの最大振動レベル（直近2時間）</h2>
+  <p class="sub">点線は特定建設作業の規制基準 75 dB（工事現場の敷地境界での値）。</p>
+  <div class="fig" style="height:240px"><canvas id="cv2"></canvas></div>
+  <h2 style="margin-top:22px">時間ごとのまとめ</h2>
+  <div id="hours"></div>
+  <div class="ctrl"><button id="bMin">1分ごとの記録をCSV保存</button></div>
+</section>
+
+<section class="band">
+  <h2>揺れの検知記録</h2>
+  <div id="log"></div>
+</section>
+
+<section class="band">
+  <h2>使い方と注意</h2>
+  <ul class="note">
+    <li>センサーは HTTPS で配信したページでしか動きません（GitHub Pages・Netlify など）。iPhone は「開始」を押すと許可ダイアログが出ます。</li>
+    <li>手に持つと揺れと区別できません。机・床に置き、画面は点けたままにしてください（対応ブラウザでは自動でスリープを防ぎます）。</li>
+    <li>振動レベルは、上下方向の揺れの実効値から計算した目安です（20·log₁₀(実効値 ÷ 10⁻⁵ m/s²)）。正式な振動レベル計（JIS C 1510）の周波数補正はしていません。スマホのセンサーには雑音があるため、おおむね 55〜60 dB 以下は正しく測れません。</li>
+    <li>工事の振動を記録するときは、1階の床（できれば工事側の部屋）に置き、充電しながら工事中ずっと動かしてください。1分ごとの記録は端末内に7日分残ります。</li>
+    <li>震度は加速度だけから計算した目安です（I ≒ 2·log₁₀(gal) + 0.94）。気象庁の計測震度とは一致しません。</li>
+    <li>ブラウザが背景に回るとセンサーは止まります。緊急地震速報の代わりにはなりません。</li>
+  </ul>
+</section>
+
+<script>
+{
+const $ = id => document.getElementById(id);
+const cv = $('cv'), ctx = cv.getContext('2d');
+const WIN = 30;            // 表示秒数
+const STA_T = 0.5, LTA_T = 10, OFF_RATIO = 1.5, HOLD = 2;
+let running = false, demo = false, demoT = -1, wakeLock = null, audio = null;
+let grav = null, sta = 0, lta = 0.3, lastT = 0, hzEma = 0;
+let buf = [];              // {t, v, trig}
+let ev = null, quietSince = 0, recentMax = 0, recentMaxT = 0;
+let ratioTh = 3, minGal = 2;
+let log = [];
+try { log = JSON.parse(localStorage.getItem('shakeLog') || '[]'); } catch (e) { log = []; }
+
+let ms = 0, db = 0, acc = null, mins = [];
+try { mins = JSON.parse(localStorage.getItem('shakeMin') || '[]'); } catch (e) { mins = []; }
+function pushMinute(a) {
+  if (a.k * 60000 < Date.now() - 7 * 864e5) return;
+  mins.push({k: a.k, db: +a.db.toFixed(1), gal: +a.gal.toFixed(1), demo: demo || undefined});
+  const cut = Math.floor(Date.now() / 60000) - 7 * 1440;
+  while (mins.length && mins[0].k < cut) mins.shift();
+  try { localStorage.setItem('shakeMin', JSON.stringify(mins)); } catch (e) {}
+  renderHours();
+}
+const pad = n => String(n).padStart(2, '0');
+const ymdh = d => `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}時台`;
+function renderHours() {
+  if (!mins.length) { $('hours').innerHTML = '<div class="empty">計測を始めると、1分ごとに最大値を記録し、ここに1時間ずつまとめます。</div>'; return; }
+  const g = new Map();
+  for (const m of mins) {
+    const d = new Date(m.k * 60000); d.setMinutes(0, 0, 0);
+    const key = d.getTime(), h = g.get(key) || {n: 0, db: 0, gal: 0, o65: 0, o75: 0};
+    h.n++; h.db = Math.max(h.db, m.db); h.gal = Math.max(h.gal, m.gal); if (m.db >= 65) h.o65++; if (m.db >= 75) h.o75++;
+    g.set(key, h);
+  }
+  const rows = [...g.entries()].sort((a, b) => b[0] - a[0]).slice(0, 48);
+  $('hours').innerHTML = '<div class="scroll"><table><thead><tr><th>時間帯</th><th>計測分数</th><th>最大</th><th>最大gal</th><th>65dB以上</th><th>75dB以上</th></tr></thead><tbody>' +
+    rows.map(([k, h]) => `<tr><td>${ymdh(new Date(k))}</td><td>${h.n} 分</td><td>${h.db.toFixed(1)} dB</td><td>${h.gal.toFixed(1)}</td><td>${h.o65} 分</td><td${h.o75 ? ' style="color:var(--acc);font-weight:700"' : ''}>${h.o75} 分</td></tr>`).join('') + '</tbody></table></div>';
+}
+function draw2() {
+  const c = $('cv2'), x2 = c.getContext('2d'), dpr = devicePixelRatio || 1, W = c.clientWidth, H = c.clientHeight;
+  if (c.width !== W * dpr || c.height !== H * dpr) { c.width = W * dpr; c.height = H * dpr; }
+  x2.setTransform(dpr, 0, 0, dpr, 0, 0); x2.clearRect(0, 0, W, H);
+  const ink = getComputedStyle(document.body).color, line = getComputedStyle(c.parentElement).borderTopColor, mute = getComputedStyle($('sHz').parentElement).color;
+  const now = Math.floor(Date.now() / 60000), N = 120, lo = 40, hi = 90, L = 44, B = 22;
+  const y = d => H - B - (Math.min(hi, Math.max(lo, d)) - lo) / (hi - lo) * (H - B - 10);
+  x2.font = '12px Geist, sans-serif'; x2.lineWidth = 1;
+  for (let d = 50; d <= 90; d += 10) { x2.strokeStyle = line; x2.beginPath(); x2.moveTo(L, y(d)); x2.lineTo(W, y(d)); x2.stroke(); x2.fillStyle = mute; x2.fillText(d + ' dB', 2, y(d) + 4); }
+  const bw = (W - L) / N, data = mins.concat(acc ? [acc] : []);
+  for (const m of data) {
+    const i = N - 1 - (now - m.k); if (i < 0 || i >= N) continue;
+    x2.fillStyle = m.db >= 75 ? '#ff4f00' : ink; x2.globalAlpha = m.db >= 75 ? 1 : 0.75;
+    x2.fillRect(L + i * bw + 0.5, y(m.db), Math.max(1, bw - 1), H - B - y(m.db));
+  }
+  x2.globalAlpha = 1; x2.setLineDash([5, 4]); x2.strokeStyle = '#ff4f00'; x2.beginPath(); x2.moveTo(L, y(75)); x2.lineTo(W, y(75)); x2.stroke(); x2.setLineDash([]);
+  x2.fillStyle = mute;
+  for (let s = 0; s <= N; s += 30) { const xx = L + (N - s) * bw; x2.fillText(s ? `-${s}分` : '今', Math.min(W - 24, Math.max(L, xx - 14)), H - 5); }
+}
+setInterval(draw2, 2000);
+const intensity = g => g < 0.1 ? null : 2 * Math.log10(g) + 0.94;
+const shindo = I => I == null || I < 0.5 ? '0' : I < 1.5 ? '1' : I < 2.5 ? '2' : I < 3.5 ? '3' : I < 4.5 ? '4' : I < 5 ? '5弱' : I < 5.5 ? '5強' : I < 6 ? '6弱' : I < 6.5 ? '6強' : '7';
+const fmtT = ms => new Date(ms).toLocaleString('ja-JP', {month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit', second:'2-digit'});
+
+function sample(ax, ay, az, now) {
+  const dt = lastT ? Math.min((now - lastT) / 1000, 0.2) : 1 / 60;
+  lastT = now;
+  if (dt > 0) hzEma += ((1 / dt) - hzEma) * 0.05;
+  // 重力成分をローパスで推定し、差分を揺れとする（m/s² → gal）
+  if (!grav) grav = [ax, ay, az];
+  const a = Math.min(1, dt / 0.8);
+  grav[0] += (ax - grav[0]) * a; grav[1] += (ay - grav[1]) * a; grav[2] += (az - grav[2]) * a;
+  const lx = ax - grav[0], ly = ay - grav[1], lz = az - grav[2];
+  const v = Math.hypot(lx, ly, lz) * 100;
+  // 振動レベル：上下（重力方向）成分の実効値、時定数 0.63 秒
+  const gn = Math.hypot(grav[0], grav[1], grav[2]) || 9.81;
+  const vert = (lx * grav[0] + ly * grav[1] + lz * grav[2]) / gn;
+  ms += (vert * vert - ms) * Math.min(1, dt / 0.63);
+  db = 10 * Math.log10(Math.max(ms, 1e-12) / 1e-10);
+  const k = Math.floor(Date.now() / 60000);
+  if (!acc || acc.k !== k) { if (acc) pushMinute(acc); acc = {k, db: 0, gal: 0}; }
+  acc.db = Math.max(acc.db, db); acc.gal = Math.max(acc.gal, v);
+  sta += (v - sta) * Math.min(1, dt / STA_T);
+  if (!ev) lta += (v - lta) * Math.min(1, dt / LTA_T);
+  const ratio = sta / Math.max(lta, 0.05);
+  if (!ev && ratio > ratioTh && sta > minGal) startEvent(now);
+  if (ev) {
+    ev.max = Math.max(ev.max, v);
+    if (ratio < OFF_RATIO || sta < minGal * 0.5) { if (!quietSince) quietSince = now; else if (now - quietSince > HOLD * 1000) endEvent(now); }
+    else quietSince = 0;
+  }
+  if (v > recentMax || now - recentMaxT > 60000) { recentMax = v; recentMaxT = now; }
+  buf.push({t: now, v, trig: !!ev});
+  while (buf.length && now - buf[0].t > WIN * 1000) buf.shift();
+  $('sRatio').textContent = ratio.toFixed(1);
+}
+
+function startEvent(now) {
+  ev = {start: now, max: 0}; quietSince = 0;
+  document.body.classList.add('alarm');
+  if ($('iVib').checked && navigator.vibrate) navigator.vibrate([400, 150, 400]);
+  if ($('iSound').checked) beep();
+}
+function endEvent(now) {
+  const I = intensity(ev.max);
+  log.unshift({abs: Date.now() - (performance.now() - ev.start), dur: (now - ev.start) / 1000 - HOLD, max: ev.max, shindo: shindo(I), demo});
+  log = log.slice(0, 200);
+  try { localStorage.setItem('shakeLog', JSON.stringify(log)); } catch (e) {}
+  ev = null; quietSince = 0;
+  document.body.classList.remove('alarm');
+  renderLog();
+}
+
+function beep() {
+  if (!audio) return;
+  const o = audio.createOscillator(), g = audio.createGain();
+  o.type = 'square'; o.frequency.value = 880;
+  g.gain.setValueAtTime(0.0001, audio.currentTime);
+  [0, 0.35, 0.7].forEach(s => { g.gain.setValueAtTime(0.25, audio.currentTime + s); g.gain.setValueAtTime(0.0001, audio.currentTime + s + 0.2); });
+  o.connect(g).connect(audio.destination); o.start(); o.stop(audio.currentTime + 1);
+}
+
+function onMotion(e) {
+  if (demo) return;
+  const a = e.accelerationIncludingGravity;
+  if (!a || a.x == null) return;
+  sample(a.x, a.y, a.z, performance.now());
+}
+
+async function start() {
+  if (running) { stop(); return; }
+  $('msg').textContent = '';
+  try { audio = audio || new (window.AudioContext || window.webkitAudioContext)(); audio.resume(); } catch (e) {}
+  if (!window.isSecureContext) { $('msg').textContent = 'HTTPS で開いていないため、センサーを使えません。デモのみ動作します。'; return; }
+  if (typeof DeviceMotionEvent === 'undefined') { $('msg').textContent = 'この端末・ブラウザは加速度センサーに対応していません。'; return; }
+  if (typeof DeviceMotionEvent.requestPermission === 'function') {
+    try { if (await DeviceMotionEvent.requestPermission() !== 'granted') { $('msg').textContent = 'センサーの使用が許可されませんでした。'; return; } }
+    catch (e) { $('msg').textContent = '許可の確認に失敗しました：' + e.message; return; }
+  }
+  window.addEventListener('devicemotion', onMotion);
+  running = true; grav = null; lastT = 0;
+  try { if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen'); } catch (e) {}
+  setTimeout(() => { if (running && !demo && hzEma < 1) $('msg').textContent = 'センサーの値が届いていません。PCなどセンサーのない端末では「デモ揺れ」でお試しください。'; }, 3000);
+  updState();
+}
+function stop() {
+  window.removeEventListener('devicemotion', onMotion);
+  running = false; if (ev) endEvent(performance.now());
+  try { wakeLock && wakeLock.release(); } catch (e) {} wakeLock = null;
+  updState();
+}
+function updState() {
+  $('sState').className = running || demo ? 'on' : '';
+  $('sState').innerHTML = '<span class="dot"></span>' + (demo ? 'デモ実行中' : running ? '監視中' : '停止中');
+  $('bStart').textContent = running ? '停止' : '開始';
+}
+document.addEventListener('visibilitychange', async () => {
+  if (document.visibilityState === 'visible' && running && 'wakeLock' in navigator) { try { wakeLock = await navigator.wakeLock.request('screen'); } catch (e) {} }
+});
+
+// デモ：平常ノイズ数秒 → P波 → S波 → 減衰
+let demoTimer = null;
+function runDemo() {
+  try { audio = audio || new (window.AudioContext || window.webkitAudioContext)(); audio.resume(); } catch (e) {}
+  if (demoTimer) return;
+  demo = true; demoT = 0; grav = null; lastT = 0; updState();
+  const amp = 30 + Math.random() * 170;
+  demoTimer = setInterval(() => {
+    demoT += 1 / 60;
+    const t = demoT, n = () => (Math.random() - 0.5) * 0.012;
+    let A = 0;
+    if (t > 3 && t < 6) A = amp * 0.12 * Math.min(1, (t - 3));
+    else if (t >= 6) A = amp * Math.exp(-(t - 6) / 3) * Math.min(1, (t - 6) * 2) / 100;
+    if (t > 3 && t < 6) A /= 100;
+    const w = Math.sin(t * 2 * Math.PI * (t < 6 ? 6 : 1.8));
+    sample(n() + A * w, n() + A * Math.cos(t * 9), 9.81 + n() + A * 0.6 * w, performance.now());
+    if (t > 22) { clearInterval(demoTimer); demoTimer = null; demo = false; updState(); }
+  }, 1000 / 60);
+}
+
+function draw() {
+  const dpr = devicePixelRatio || 1, W = cv.clientWidth, H = cv.clientHeight;
+  if (cv.width !== W * dpr || cv.height !== H * dpr) { cv.width = W * dpr; cv.height = H * dpr; }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, W, H);
+  // light-dark() はキャンバスで解釈できないため、描画済み要素の色を借りる
+  const ink = getComputedStyle(document.body).color, line = getComputedStyle(cv.parentElement).borderTopColor, mute = getComputedStyle($('sHz').parentElement).color;
+  const now = performance.now();
+  const peak = Math.max(5, ...buf.map(p => p.v)) * 1.15;
+  const x = t => W - (now - t) / (WIN * 1000) * W, y = v => H - 22 - v / peak * (H - 40);
+  // 目盛り
+  ctx.strokeStyle = line; ctx.fillStyle = mute;
+  ctx.lineWidth = 1; ctx.font = '12px Geist, sans-serif';
+  for (let s = 0; s <= WIN; s += 5) { const xx = W - s / WIN * W; ctx.beginPath(); ctx.moveTo(xx, 0); ctx.lineTo(xx, H - 18); ctx.stroke(); if (W > 400 || s % 10 === 0) ctx.fillText(s ? `-${s}s` : '今', Math.max(2, xx - (s ? 14 : 18)), H - 4); }
+  const step = peak > 200 ? 100 : peak > 50 ? 20 : peak > 20 ? 10 : 2;
+  for (let g = step; g < peak; g += step) { ctx.beginPath(); ctx.moveTo(0, y(g)); ctx.lineTo(W, y(g)); ctx.stroke(); ctx.fillText(g + ' gal', 6, y(g) - 3); }
+  // トリガー区間
+  ctx.fillStyle = 'rgba(255,79,0,.16)';
+  for (let i = 0; i < buf.length; i++) if (buf[i].trig) { const x0 = x(buf[i].t), x1 = i + 1 < buf.length ? x(buf[i + 1].t) : W; ctx.fillRect(x0, 0, x1 - x0 + 0.5, H - 18); }
+  // 波形
+  ctx.beginPath(); ctx.lineWidth = 1.4; ctx.strokeStyle = ink;
+  buf.forEach((p, i) => i ? ctx.lineTo(x(p.t), y(p.v)) : ctx.moveTo(x(p.t), y(p.v)));
+  ctx.stroke();
+  // しきい値線
+  ctx.setLineDash([4, 4]); ctx.strokeStyle = '#ff4f00'; ctx.beginPath(); ctx.moveTo(0, y(minGal)); ctx.lineTo(W, y(minGal)); ctx.stroke(); ctx.setLineDash([]);
+  // 読み取り
+  const cur = buf.length ? sta : 0;
+  $('vNow').textContent = cur.toFixed(1);
+  $('vMax').textContent = recentMax.toFixed(1);
+  $('vInt').textContent = (running || demo) ? shindo(intensity(ev ? ev.max : cur)) : '–';
+  $('vDb').textContent = (running || demo) ? Math.max(0, db).toFixed(1) : '–';
+  $('sHz').textContent = hzEma > 1 ? Math.round(hzEma) : '–';
+  $('sNoise').textContent = (running || demo) ? lta.toFixed(2) : '–';
+  requestAnimationFrame(draw);
+}
+
+function renderLog() {
+  if (!log.length) { $('log').innerHTML = '<div class="empty">まだ記録はありません。揺れを検知すると、ここに時刻・最大加速度・推定震度が残ります。</div>'; return; }
+  $('log').innerHTML = '<div class="scroll"><table><thead><tr><th>検知時刻</th><th>継続</th><th>最大</th><th>推定震度</th></tr></thead><tbody>' +
+    log.map(r => `<tr><td>${fmtT(r.abs)}${r.demo ? '（デモ）' : ''}</td><td>${Math.max(0, r.dur).toFixed(1)} 秒</td><td>${r.max.toFixed(1)} gal</td><td>${r.shindo}</td></tr>`).join('') +
+    '</tbody></table></div>';
+}
+
+function csv() {
+  const rows = [['検知時刻', '継続秒', '最大gal', '推定震度', 'デモ']].concat(log.map(r => [fmtT(r.abs || Date.now()), Math.max(0, r.dur).toFixed(1), r.max.toFixed(1), r.shindo, r.demo ? '1' : '']));
+  const blob = new Blob(['﻿' + rows.map(r => r.join(',')).join('\n')], {type: 'text/csv'});
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'shake-log.csv'; a.click();
+}
+
+$('bStart').addEventListener('click', start);
+$('bDemo').addEventListener('click', runDemo);
+$('bCsv').addEventListener('click', csv);
+$('bMin').addEventListener('click', () => {
+  const rows = [['日時', '最大振動レベルdB', '最大gal', 'デモ']].concat(mins.map(m => { const d = new Date(m.k * 60000); return [`${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`, m.db, m.gal, m.demo ? '1' : '']; }));
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['﻿' + rows.map(r => r.join(',')).join('\n')], {type: 'text/csv'})); a.download = 'vibration-minutes.csv'; a.click();
+});
+renderHours(); draw2();
+$('bClear').addEventListener('click', () => { log = []; mins = []; try { localStorage.removeItem('shakeLog'); localStorage.removeItem('shakeMin'); } catch (e) {} renderLog(); renderHours(); });
+$('iRatio').addEventListener('input', e => { ratioTh = +e.target.value; $('oRatio').textContent = ratioTh.toFixed(1); });
+$('iMin').addEventListener('input', e => { minGal = +e.target.value; $('oMin').textContent = minGal.toFixed(1) + ' gal'; });
+renderLog(); updState(); requestAnimationFrame(draw);
+}
+</script>
+</body>
+</html>
