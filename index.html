@@ -56,8 +56,11 @@ th{font-size:13px;color:var(--mute);font-weight:500}
 .note li{margin:4px 0}
 .msg{margin-top:10px;font-size:14px;color:var(--acc);min-height:1em}
 .scroll{overflow-x:auto}
+[hidden]{display:none!important}
 button.del{min-height:36px;padding:0 12px;font-size:14px;font-weight:400}
 button.del[data-sure]{background:var(--acc);color:#fff;border-color:var(--acc)}
+input[type=text]{font:inherit;font-size:16px;min-height:44px;padding:0 12px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink);width:min(100%,240px)}
+.ctrl.loc select{font-weight:700}
 select{font:inherit;font-size:16px;min-height:44px;padding:0 12px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink)}
 .judge{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px 20px;margin-top:12px}
 .judge .lv{font-size:clamp(22px,4vw,30px);font-weight:700;line-height:1.2;margin:2px 0 6px}
@@ -92,6 +95,17 @@ select{font:inherit;font-size:16px;min-height:44px;padding:0 12px;border-radius:
     <b id="sHold" style="color:var(--acc)"></b>
   </div>
 
+  <div class="ctrl loc">
+    <label for="iLoc" class="lab">計測場所</label>
+    <select id="iLoc"></select>
+    <button id="bLocAdd">場所を追加</button>
+    <button id="bLocDel">一覧から外す</button>
+  </div>
+  <div class="ctrl" id="locAdd" hidden>
+    <input id="iLocName" type="text" maxlength="20" placeholder="例：1階和室">
+    <button class="pri" id="bLocOk">追加</button>
+    <button id="bLocCancel">やめる</button>
+  </div>
   <div class="ctrl">
     <button class="pri" id="bStart">開始</button>
     <button id="bDemo">デモ揺れを発生</button>
@@ -109,6 +123,7 @@ select{font:inherit;font-size:16px;min-height:44px;padding:0 12px;border-radius:
 </section>
 
 <section class="band">
+  <div class="ctrl" style="margin:0 0 14px"><label for="iView" class="lab">表示する場所</label><select id="iView"></select></div>
   <h2>1分ごとの最大振動レベル（直近2時間）</h2>
   <p class="sub">点線は特定建設作業の規制基準 75 dB（工事現場の敷地境界での値）。</p>
   <div class="fig" style="height:240px"><canvas id="cv2"></canvas></div>
@@ -139,6 +154,7 @@ select{font:inherit;font-size:16px;min-height:44px;padding:0 12px;border-radius:
     <li>センサーは HTTPS で配信したページでしか動きません（GitHub Pages・Netlify など）。iPhone は「開始」を押すと許可ダイアログが出ます。</li>
     <li>手に持つと揺れと区別できません。机・床に置き、画面は点けたままにしてください（対応ブラウザでは自動でスリープを防ぎます）。</li>
     <li>振動レベルは、上下方向の揺れの実効値から計算した目安です（20·log₁₀(実効値 ÷ 10⁻⁵ m/s²)）。正式な振動レベル計（JIS C 1510）の周波数補正はしていません。スマホのセンサーには雑音があるため、おおむね 55〜60 dB 以下は正しく測れません。</li>
+    <li>計測場所を選んでから「開始」を押すと、記録に場所が付きます。スマホが複数あれば、別々の部屋で同時に測り、CSVをPCで読み込んで比べられます。</li>
     <li>工事の振動を記録するときは、1階の床（できれば工事側の部屋）に置き、充電しながら工事中ずっと動かしてください。1分ごとの記録は端末内に14日分残ります。</li>
     <li>震度は加速度だけから計算した目安です（I ≒ 2·log₁₀(gal) + 0.94）。気象庁の計測震度とは一致しません。</li>
     <li>ブラウザが背景に回るとセンサーは止まります。緊急地震速報の代わりにはなりません。</li>
@@ -164,9 +180,31 @@ const hold = t => { holdUntil = Math.max(holdUntil, performance.now() + t); };
 // 画面に触れたら3秒間は記録しない（タップの振動を拾わないため）
 ['touchstart', 'pointerdown'].forEach(n => document.addEventListener(n, () => hold(3000), {passive: true}));
 try { mins = JSON.parse(localStorage.getItem('shakeMin') || '[]'); } catch (e) { mins = []; }
+// ---- 計測場所 ----
+const NOLOC = '場所未設定';
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
+const locOf = m => m.loc || NOLOC;
+let locs = ['1階リビング', '2階寝室'], curLoc = '1階リビング';
+try { locs = JSON.parse(localStorage.getItem('shakeLocs')) || locs; curLoc = localStorage.getItem('shakeLocCur') || locs[0] || NOLOC; } catch (e) {}
+const saveLocs = () => { try { localStorage.setItem('shakeLocs', JSON.stringify(locs)); localStorage.setItem('shakeLocCur', curLoc); } catch (e) {} };
+function renderLocs() {
+  if (!locs.length) locs = [NOLOC];
+  if (!locs.includes(curLoc)) curLoc = locs[0];
+  $('iLoc').innerHTML = locs.map(l => `<option${l === curLoc ? ' selected' : ''}>${esc(l)}</option>`).join('');
+  const all = [...new Set(locs.concat(mins.map(locOf), log.map(locOf)))];
+  const v = $('iView'), cur = v.value || 'all';
+  v.innerHTML = '<option value="all">すべての場所</option>' + all.map(l => `<option>${esc(l)}</option>`).join('');
+  v.value = [...v.options].some(o => o.value === cur) ? cur : 'all';
+}
+const viewMins = () => { const v = $('iView').value; return !v || v === 'all' ? mins : mins.filter(m => locOf(m) === v); };
+function setLoc(l) {
+  if (acc) { pushMinute(acc); acc = null; }   // 場所を変えたら、それまでの1分を前の場所で確定
+  curLoc = l; saveLocs(); renderLocs();
+  if (running) hold(10000);                    // 移動して置き直す時間
+}
 function pushMinute(a) {
   if (a.k * 60000 < Date.now() - 14 * 864e5) return;
-  mins.push({k: a.k, db: +a.db.toFixed(1), gal: +a.gal.toFixed(1), demo: demo || undefined});
+  mins.push({k: a.k, loc: a.loc, db: +a.db.toFixed(1), gal: +a.gal.toFixed(1), demo: demo || undefined});
   const cut = Math.floor(Date.now() / 60000) - 14 * 1440;
   while (mins.length && mins[0].k < cut) mins.shift();
   try { localStorage.setItem('shakeMin', JSON.stringify(mins)); } catch (e) {}
@@ -175,18 +213,19 @@ function pushMinute(a) {
 const pad = n => String(n).padStart(2, '0');
 const ymdh = d => `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}時台`;
 function renderHours() {
-  renderJudge();
-  if (!mins.length) { $('hours').innerHTML = '<div class="empty">計測を始めると、1分ごとに最大値を記録し、ここに1時間ずつまとめます。</div>'; return; }
+  renderLocs(); renderJudge();
+  const src = viewMins();
+  if (!src.length) { $('hours').innerHTML = '<div class="empty">計測を始めると、1分ごとに最大値を記録し、ここに1時間ずつ・場所ごとにまとめます。</div>'; return; }
   const g = new Map();
-  for (const m of mins) {
+  for (const m of src) {
     const d = new Date(m.k * 60000); d.setMinutes(0, 0, 0);
-    const key = d.getTime(), h = g.get(key) || {n: 0, db: 0, gal: 0, o65: 0, o75: 0};
+    const key = d.getTime() + '|' + locOf(m), h = g.get(key) || {t: d.getTime(), loc: locOf(m), n: 0, db: 0, gal: 0, o65: 0, o75: 0};
     h.n++; h.db = Math.max(h.db, m.db); h.gal = Math.max(h.gal, m.gal); if (m.db >= 65) h.o65++; if (m.db >= 75) h.o75++;
     g.set(key, h);
   }
-  const rows = [...g.entries()].sort((a, b) => b[0] - a[0]).slice(0, 48);
-  $('hours').innerHTML = '<div class="scroll"><table><thead><tr><th>時間帯</th><th>計測分数</th><th>最大</th><th>最大gal</th><th>65dB以上</th><th>75dB以上</th></tr></thead><tbody>' +
-    rows.map(([k, h]) => `<tr><td>${ymdh(new Date(k))}</td><td>${h.n} 分</td><td>${h.db.toFixed(1)} dB</td><td>${h.gal.toFixed(1)}</td><td>${h.o65} 分</td><td${h.o75 ? ' style="color:var(--acc);font-weight:700"' : ''}>${h.o75} 分</td></tr>`).join('') + '</tbody></table></div>';
+  const rows = [...g.values()].sort((a, b) => b.t - a.t || a.loc.localeCompare(b.loc)).slice(0, 72);
+  $('hours').innerHTML = '<div class="scroll"><table><thead><tr><th>時間帯</th><th>場所</th><th>計測分数</th><th>最大</th><th>65dB以上</th><th>75dB以上</th></tr></thead><tbody>' +
+    rows.map(h => `<tr><td>${ymdh(new Date(h.t))}</td><td style="text-align:left">${esc(h.loc)}</td><td>${h.n} 分</td><td>${h.db.toFixed(1)} dB</td><td>${h.o65} 分</td><td${h.o75 ? ' style="color:var(--acc);font-weight:700"' : ''}>${h.o75} 分</td></tr>`).join('') + '</tbody></table></div>';
 }
 // ---- 判定とコメント ----
 const dayKey = k => { const d = new Date(k * 60000); return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`; };
@@ -205,16 +244,26 @@ const ADV = [
   ['強い揺れです。すぐに施工業者へ連絡し、作業の一時中断や方法の見直しを求めてください。', '市区町村の環境（公害）担当にも、速やかに相談してください。', '家の被害（ひび、建具のゆがみ、物の落下）を確認し、写真で記録してください。危ないと感じたら工事側の部屋から離れてください。']
 ];
 function renderJudge() {
-  const real = mins.filter(m => !m.demo);
-  const days = [...new Set(real.map(m => dayKey(m.k)))];
+  const allReal = mins.filter(m => !m.demo), real = viewMins().filter(m => !m.demo);
+  const days = [...new Set(allReal.map(m => dayKey(m.k)))];
   const sel = $('iDay'), cur = sel.value;
   sel.innerHTML = days.length ? days.slice().reverse().map(d => `<option>${d}</option>`).join('') + '<option value="all">すべての期間</option>' : '<option value="">記録なし</option>';
   if ([...sel.options].some(o => o.value === cur)) sel.value = cur;
-  const list = sel.value === 'all' ? real : real.filter(m => dayKey(m.k) === sel.value);
-  if (!list.length) { $('judge').innerHTML = '<p class="sub">計測すると、1分ごとの記録をもとに、揺れの程度と対応の目安をここに表示します（デモの記録は含めません）。</p>'; return; }
+  const inDay = m => sel.value === 'all' || dayKey(m.k) === sel.value;
+  const list = real.filter(inDay);
+  // 場所ごとの比較（表示する場所の選択に関係なく、その日の全部の場所）
+  const byLoc = new Map();
+  for (const m of allReal.filter(inDay)) { const h = byLoc.get(locOf(m)) || {n: 0, db: 0, o65: 0, o75: 0}; h.n++; h.db = Math.max(h.db, m.db); if (m.db >= 65) h.o65++; if (m.db >= 75) h.o75++; byLoc.set(locOf(m), h); }
+  const cmp = byLoc.size > 1 ? '<h3>場所ごとの比較</h3><div class="scroll"><table><thead><tr><th>場所</th><th>計測</th><th>最大</th><th>65dB以上</th><th>75dB以上</th><th>程度</th></tr></thead><tbody>' +
+    [...byLoc.entries()].sort((a, b) => b[1].db - a[1].db).map(([l, h]) => `<tr><td>${esc(l)}</td><td>${h.n} 分</td><td>${h.db.toFixed(1)} dB</td><td>${h.o65} 分</td><td>${h.o75} 分</td><td>${LV[LV.findIndex(x => h.db < x[0])][1].replace(/（.*）/, '')}</td></tr>`).join('') +
+    '</tbody></table></div>' : '';
+  const where = $('iView').value === 'all' ? (byLoc.size > 1 ? 'すべての場所で' : '') : `${esc($('iView').value)}で`;
+  if (!list.length) { $('judge').innerHTML = cmp ? '<p class="sub">選んだ場所には、この日の記録がありません。</p>' + cmp : '<p class="sub">計測すると、1分ごとの記録をもとに、揺れの程度と対応の目安をここに表示します（デモの記録は含めません）。</p>'; return; }
   const top = list.reduce((a, b) => b.db > a.db ? b : a);
   const i = LV.findIndex(l => top.db < l[0]);
-  const c65 = list.filter(m => m.db >= 65).length, c75 = list.filter(m => m.db >= 75).length;
+  // 複数の場所を同時に測った分は1分として数える
+  const uniq = f => new Set(list.filter(f).map(m => m.k)).size;
+  const c65 = uniq(m => m.db >= 65), c75 = uniq(m => m.db >= 75), nMin = uniq(() => true);
   const off = list.filter(m => { const d = new Date(m.k * 60000), h = d.getHours(); return m.db >= 65 && (h < 7 || h >= 19 || d.getDay() === 0); });
   const t = new Date(top.k * 60000), at = `${t.getMonth() + 1}/${t.getDate()} ${pad(t.getHours())}:${pad(t.getMinutes())}`;
   const extra = [];
@@ -222,22 +271,27 @@ function renderJudge() {
   if (off.length) extra.push(`工事が原則禁止されている時間帯（多くの住宅地では19時〜翌7時、日曜・休日）に、65 dB 以上の揺れが ${off.length} 分記録されています。車の通行など工事以外の原因でないか確かめたうえで、自治体に相談できます。`);
   if (top.gal >= 50) extra.push('最大の揺れがとても大きい値です。そのときスマホに触れた、落ちた、物が当たったなどがないか、体感と照らし合わせて確認してください。');
   $('judge').innerHTML =
-    `<div class="lab">最大 ${top.db.toFixed(1)} dB の揺れは</div><div class="lv${i >= 3 ? ' w' : ''}">${LV[i][1]}</div><p style="margin:0">${LV[i][2]}</p>` +
-    `<div class="facts"><span>計測 <b>${list.length} 分</b></span><span>最大の時刻 <b>${at}</b></span><span>65 dB以上 <b>${c65} 分</b></span><span>75 dB以上 <b>${c75} 分</b></span></div>` +
+    `<div class="lab">${where}最大 ${top.db.toFixed(1)} dB（${esc(locOf(top))}）の揺れは</div><div class="lv${i >= 3 ? ' w' : ''}">${LV[i][1]}</div><p style="margin:0">${LV[i][2]}</p>` +
+    `<div class="facts"><span>計測 <b>${nMin} 分</b>${byLoc.size > 1 && $('iView').value === 'all' ? `（${byLoc.size}か所）` : ''}</span><span>最大の時刻 <b>${at}</b></span><span>65 dB以上 <b>${c65} 分</b></span><span>75 dB以上 <b>${c75} 分</b></span></div>` +
     `<h3>おすすめの対応</h3><ul>${ADV[i].map(s => `<li>${s}</li>`).join('')}</ul>` +
-    extra.map(s => `<p class="warn">${s}</p>`).join('') +
+    extra.map(s => `<p class="warn">${s}</p>`).join('') + cmp +
     '<p class="fine">スマホによる簡易計測の目安です。震度との対応は、自治体が示している振動レベルと震度階の換算値によります。規制基準 75 dB は工事現場の敷地境界での値なので、家の中の値とは直接比べられません。正式な評価には振動レベル計での測定が必要です。</p>';
 }
 // ---- CSV 読み込み（スマホで保存したCSVをPCで見る） ----
 function importCsv(text) {
   const lines = text.replace(/^﻿/, '').split(/\r?\n/).filter(Boolean);
   if (!lines.length || !lines[0].includes('最大振動レベルdB')) return '「1分ごとの記録をCSV保存」で作ったファイルを選んでください。';
-  const map = new Map(mins.map(m => [m.k, m])); let n = 0;
+  const hd = lines[0].split(','), ix = name => hd.findIndex(h => h.trim() === name);
+  const iT = ix('日時'), iL = ix('場所'), iD = ix('最大振動レベルdB'), iG = ix('最大gal'), iX = ix('デモ');
+  const key = m => m.k + '|' + locOf(m);
+  const map = new Map(mins.map(m => [key(m), m])); let n = 0;
   for (const ln of lines.slice(1)) {
-    const [dt, d, g, demoFlag] = ln.split(',');
-    const p = (dt || '').match(/(\d+)\/(\d+)\/(\d+) (\d+):(\d+)/); if (!p) continue;
+    const c = ln.split(',');
+    const p = (c[iT] || '').match(/(\d+)\/(\d+)\/(\d+) (\d+):(\d+)/); if (!p) continue;
     const k = Math.floor(new Date(+p[1], p[2] - 1, +p[3], +p[4], +p[5]).getTime() / 60000);
-    map.set(k, {k, db: +d, gal: +g, demo: demoFlag === '1' || undefined}); n++;
+    const loc = iL >= 0 && c[iL] && c[iL] !== NOLOC ? c[iL] : undefined;
+    const m = {k, loc, db: +c[iD], gal: +c[iG], demo: c[iX] === '1' || undefined};
+    map.set(key(m), m); n++;
   }
   mins = [...map.values()].sort((a, b) => a.k - b.k);
   try { localStorage.setItem('shakeMin', JSON.stringify(mins)); } catch (e) {}
@@ -255,7 +309,11 @@ function draw2() {
   const y = d => H - B - (Math.min(hi, Math.max(lo, d)) - lo) / (hi - lo) * (H - B - 10);
   x2.font = '12px Geist, sans-serif'; x2.lineWidth = 1;
   for (let d = 50; d <= 90; d += 10) { x2.strokeStyle = line; x2.beginPath(); x2.moveTo(L, y(d)); x2.lineTo(W, y(d)); x2.stroke(); x2.fillStyle = mute; x2.fillText(d + ' dB', 2, y(d) + 4); }
-  const bw = (W - L) / N, data = mins.concat(acc ? [acc] : []);
+  // 同じ分に複数の場所があるときは、その分の最大値を描く
+  const v = $('iView').value, pick = m => !v || v === 'all' || locOf(m) === v;
+  const per = new Map();
+  for (const m of mins.concat(acc ? [acc] : [])) if (pick(m) && (!per.has(m.k) || per.get(m.k).db < m.db)) per.set(m.k, m);
+  const bw = (W - L) / N, data = [...per.values()];
   for (const m of data) {
     const i = N - 1 - (now - m.k); if (i < 0 || i >= N) continue;
     x2.fillStyle = m.db >= 75 ? '#ff4f00' : ink; x2.globalAlpha = m.db >= 75 ? 1 : 0.75;
@@ -296,7 +354,7 @@ function sample(ax, ay, az, now) {
   ms += (vert * vert - ms) * Math.min(1, dt / 0.63);
   db = 10 * Math.log10(Math.max(ms, 1e-12) / 1e-10);
   const k = Math.floor(Date.now() / 60000);
-  if (!acc || acc.k !== k) { if (acc) pushMinute(acc); acc = {k, db: 0, gal: 0}; }
+  if (!acc || acc.k !== k) { if (acc) pushMinute(acc); acc = {k, loc: curLoc, db: 0, gal: 0}; }
   acc.db = Math.max(acc.db, db); acc.gal = Math.max(acc.gal, v);
   sta += (v - sta) * Math.min(1, dt / STA_T);
   if (!ev) lta += (v - lta) * Math.min(1, dt / LTA_T);
@@ -321,7 +379,7 @@ function startEvent(now) {
 }
 function endEvent(now) {
   const I = intensity(ev.max);
-  log.unshift({abs: Date.now() - (performance.now() - ev.start), dur: (now - ev.start) / 1000 - HOLD, max: ev.max, shindo: shindo(I), demo});
+  log.unshift({abs: Date.now() - (performance.now() - ev.start), dur: (now - ev.start) / 1000 - HOLD, max: ev.max, shindo: shindo(I), loc: curLoc, demo});
   log = log.slice(0, 200);
   try { localStorage.setItem('shakeLog', JSON.stringify(log)); } catch (e) {}
   ev = null; quietSince = 0;
@@ -435,13 +493,13 @@ function draw() {
 
 function renderLog() {
   if (!log.length) { $('log').innerHTML = '<div class="empty">まだ記録はありません。揺れを検知すると、ここに時刻・最大加速度・推定震度が残ります。</div>'; return; }
-  $('log').innerHTML = '<div class="scroll"><table><thead><tr><th>検知時刻</th><th>継続</th><th>最大</th><th>推定震度</th><th></th></tr></thead><tbody>' +
-    log.map((r, i) => `<tr><td>${fmtT(r.abs)}${r.demo ? '（デモ）' : ''}</td><td>${Math.max(0, r.dur).toFixed(1)} 秒</td><td>${r.max.toFixed(1)} gal</td><td>${r.shindo}</td><td><button class="del" data-i="${i}" aria-label="この記録を削除">削除</button></td></tr>`).join('') +
+  $('log').innerHTML = '<div class="scroll"><table><thead><tr><th>検知時刻</th><th>場所</th><th>継続</th><th>最大</th><th>推定震度</th><th></th></tr></thead><tbody>' +
+    log.map((r, i) => `<tr><td>${fmtT(r.abs)}${r.demo ? '（デモ）' : ''}</td><td style="text-align:left">${esc(locOf(r))}</td><td>${Math.max(0, r.dur).toFixed(1)} 秒</td><td>${r.max.toFixed(1)} gal</td><td>${r.shindo}</td><td><button class="del" data-i="${i}" aria-label="この記録を削除">削除</button></td></tr>`).join('') +
     '</tbody></table></div>';
 }
 
 function csv() {
-  const rows = [['検知時刻', '継続秒', '最大gal', '推定震度', 'デモ']].concat(log.map(r => [fmtT(r.abs || Date.now()), Math.max(0, r.dur).toFixed(1), r.max.toFixed(1), r.shindo, r.demo ? '1' : '']));
+  const rows = [['検知時刻', '場所', '継続秒', '最大gal', '推定震度', 'デモ']].concat(log.map(r => [fmtT(r.abs || Date.now()), locOf(r), Math.max(0, r.dur).toFixed(1), r.max.toFixed(1), r.shindo, r.demo ? '1' : '']));
   const blob = new Blob(['﻿' + rows.map(r => r.join(',')).join('\n')], {type: 'text/csv'});
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'shake-log.csv'; a.click();
 }
@@ -450,7 +508,7 @@ $('bStart').addEventListener('click', start);
 $('bDemo').addEventListener('click', runDemo);
 $('bCsv').addEventListener('click', csv);
 $('bMin').addEventListener('click', () => {
-  const rows = [['日時', '最大振動レベルdB', '最大gal', 'デモ']].concat(mins.map(m => { const d = new Date(m.k * 60000); return [`${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`, m.db, m.gal, m.demo ? '1' : '']; }));
+  const rows = [['日時', '場所', '最大振動レベルdB', '最大gal', 'デモ']].concat(mins.map(m => { const d = new Date(m.k * 60000); return [`${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`, locOf(m), m.db, m.gal, m.demo ? '1' : '']; }));
   const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['﻿' + rows.map(r => r.join(',')).join('\n')], {type: 'text/csv'})); a.download = 'vibration-minutes.csv'; a.click();
 });
 $('bImp').addEventListener('click', () => $('iImp').click());
@@ -460,6 +518,22 @@ $('iImp').addEventListener('change', e => {
   e.target.value = '';
 });
 $('iDay').addEventListener('change', renderJudge);
+$('iView').addEventListener('change', () => { renderHours(); draw2(); });
+$('iLoc').addEventListener('change', e => setLoc(e.target.value));
+$('bLocAdd').addEventListener('click', () => { $('locAdd').hidden = false; $('iLocName').focus(); });
+$('bLocCancel').addEventListener('click', () => { $('locAdd').hidden = true; $('iLocName').value = ''; });
+const addLoc = () => {
+  const n = $('iLocName').value.replace(/[,\r\n]/g, ' ').trim(); if (!n) return;
+  if (!locs.includes(n)) locs.push(n);
+  $('iLocName').value = ''; $('locAdd').hidden = true; setLoc(n);
+};
+$('bLocOk').addEventListener('click', addLoc);
+$('iLocName').addEventListener('keydown', e => { if (e.key === 'Enter') addLoc(); });
+$('bLocDel').addEventListener('click', () => {
+  if (locs.length <= 1) { $('msg').textContent = '場所は1つ以上必要です。'; return; }
+  locs = locs.filter(l => l !== curLoc); setLoc(locs[0]);
+  $('msg').textContent = '一覧から外しました（これまでの記録は残ります）。';
+});
 const saveAll = () => { try { localStorage.setItem('shakeLog', JSON.stringify(log)); localStorage.setItem('shakeMin', JSON.stringify(mins)); } catch (e) {} };
 $('bClearDemo').addEventListener('click', () => {
   const n = log.filter(r => r.demo).length + mins.filter(m => m.demo).length;
